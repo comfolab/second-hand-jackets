@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
-
 import numpy as np
 import pandas as pd
 from sklearn.cross_decomposition import PLSRegression
@@ -68,6 +66,7 @@ class PLSCVResult:
     cv_mse: dict[int, float]
     x_scores: pd.Series  # first latent variable score (t1)
     y_pred: pd.Series
+    y_pred_cv: pd.Series
 
 
 def fit_pls_cv(
@@ -89,38 +88,64 @@ def fit_pls_cv(
     Xn = Xn.loc[mask].copy()
     yn = yn.loc[mask].copy()
 
-    # preprocessing pipeline for X
+    if len(Xn) < 3:
+        raise ValueError("At least three observations are required for PLS.")
+    if Xn.shape[1] == 0:
+        raise ValueError("The PLS predictor matrix has no columns.")
+
+    n_splits = int(min(max(2, n_splits), len(Xn)))
+    kf = KFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+
+    cv_mse: dict[int, float] = {}
+    smallest_training_set = len(Xn) - int(np.ceil(len(Xn) / n_splits))
+    max_components = int(
+        max(1, min(max_components, Xn.shape[1], smallest_training_set))
+    )
+
+    splits = list(kf.split(Xn))
+    cv_predictions: dict[int, np.ndarray] = {}
+
+    for n_comp in range(1, max_components + 1):
+        mses = []
+        predictions = np.full(len(Xn), np.nan, dtype=float)
+        for train_idx, test_idx in splits:
+            Xtr_raw = Xn.iloc[train_idx]
+            Xte_raw = Xn.iloc[test_idx]
+            ytr, yte = yn.iloc[train_idx].to_numpy(), yn.iloc[test_idx].to_numpy()
+
+            fold_pipeline = Pipeline([
+                ("imputer", SimpleImputer(strategy="median")),
+                ("scaler", StandardScaler()),
+            ])
+            Xtr = fold_pipeline.fit_transform(Xtr_raw)
+            Xte = fold_pipeline.transform(Xte_raw)
+
+            model = PLSRegression(n_components=n_comp, scale=False)
+            model.fit(Xtr, ytr)
+            pred = model.predict(Xte).ravel()
+            predictions[test_idx] = pred
+            mses.append(mean_squared_error(yte, pred))
+
+        cv_mse[n_comp] = float(np.mean(mses))
+        cv_predictions[n_comp] = predictions
+
+    best_n = min(cv_mse, key=cv_mse.get)
+
     pipeline_X = Pipeline([
         ("imputer", SimpleImputer(strategy="median")),
         ("scaler", StandardScaler()),
     ])
-
     Xproc = pipeline_X.fit_transform(Xn)
 
-    kf = KFold(n_splits=n_splits, shuffle=True, random_state=random_state)
-
-    cv_mse: dict[int, float] = {}
-    max_components = int(max(1, min(max_components, Xproc.shape[1])))
-
-    for n_comp in range(1, max_components + 1):
-        mses = []
-        for train_idx, test_idx in kf.split(Xproc):
-            Xtr, Xte = Xproc[train_idx], Xproc[test_idx]
-            ytr, yte = yn.iloc[train_idx].to_numpy(), yn.iloc[test_idx].to_numpy()
-
-            model = PLSRegression(n_components=n_comp)
-            model.fit(Xtr, ytr)
-            pred = model.predict(Xte).ravel()
-            mses.append(mean_squared_error(yte, pred))
-
-        cv_mse[n_comp] = float(np.mean(mses))
-
-    best_n = min(cv_mse, key=cv_mse.get)
-
-    model = PLSRegression(n_components=best_n)
+    model = PLSRegression(n_components=best_n, scale=False)
     model.fit(Xproc, yn.to_numpy())
 
     y_pred = pd.Series(model.predict(Xproc).ravel(), index=Xn.index, name=f"PLS_pred_{y.name}")
+    y_pred_cv = pd.Series(
+        cv_predictions[best_n],
+        index=Xn.index,
+        name=f"PLS_CV_pred_{y.name}",
+    )
     # x_scores_: (n_samples, n_components). Use first latent score as index
     t1 = pd.Series(model.x_scores_[:, 0], index=Xn.index, name="PLS_t1")
 
@@ -131,4 +156,5 @@ def fit_pls_cv(
         cv_mse=cv_mse,
         x_scores=t1,
         y_pred=y_pred,
+        y_pred_cv=y_pred_cv,
     )

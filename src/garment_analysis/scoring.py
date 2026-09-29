@@ -29,8 +29,9 @@ def orient_index(
     Ensure index increases with the target (positive correlation).
     If higher_target_is_better is False, it flips accordingly.
     """
+    aligned_target = pd.to_numeric(target.reindex(idx.index), errors="coerce")
     a = idx.to_numpy(dtype=float)
-    b = pd.to_numeric(target, errors="coerce").to_numpy(dtype=float)
+    b = aligned_target.to_numpy(dtype=float)
     ok = ~(np.isnan(a) | np.isnan(b))
     if ok.sum() < 3:
         return idx
@@ -41,5 +42,9 @@ def orient_index(
 
     desired_sign = 1.0 if higher_target_is_better else -1.0
     if np.sign(corr) != np.sign(desired_sign):
-        return -idx
+        lo = float(np.nanmin(a))
+        hi = float(np.nanmax(a))
+        flipped = (lo + hi) - idx
+        flipped.name = idx.name
+        return flipped
     return idx

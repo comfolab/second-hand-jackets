@@ -52,37 +52,41 @@ class FeatureGroups:
 
 def infer_feature_groups(df: pd.DataFrame) -> FeatureGroups:
     """
-    Heuristic grouping based on column names.
-    Adjust patterns to match your dataset naming.
-    """
-    cols = list(df.columns)
+    Identify the predefined elementary variables used in the analyses.
 
-    # Targets / functional measurements (edit if your names differ)
+    Derived averages are deliberately excluded from the PCA feature groups.
+    """
+    cols = set(df.columns)
     rain_target = "Rain_test_Average"
     spray_target = "Spray_test_Average"
 
-    # Typical test measurement columns (edit pattern)
-    rain_cols = [c for c in cols if ("Rain" in c or "RAIN" in c) and c != rain_target]
-    spray_cols = [c for c in cols if ("Spray" in c or "SPRAY" in c) and c != spray_target]
-
-    # Visual inspection scores: common prefixes/patterns (edit pattern)
-    visual_cols = [
-        c for c in cols
-        if any(k in c for k in ["VIS", "Visual", "Inspection", "Score", "Zone"])
-        and c not in rain_cols
-        and c not in spray_cols
-        and c not in [rain_target, spray_target]
+    visual_candidates = [
+        "Face_Neck", "Face_Shoulders", "Face_Front", "Face_Back",
+        "Face_Arms", "Face_Cuffs",
+        "Membrane_Neck", "Membrane_Shoulders", "Membrane_Front",
+        "Membrane_Back", "Membrane_Arms", "Membrane_Cuffs",
+        "Seams_Neck", "Seams_Shoulders", "Seams_Front", "Seams_Back",
+        "Seams_Arms", "Seams_Cuffs",
+        "Zips_Central", "Zips_Pockets", "Zips_Armpits",
+        "Velcro_Average", "Trims_Average",
     ]
+    rain_candidates = [
+        "Rain_Neck", "Rain_Shoulders", "Rain_Front", "Rain_Back",
+        "Rain_Arms", "Rain_Zip", "Rain_Cuffs", "Rain_Hem",
+        "Rain_Underarms", "Rain_Pockets",
+    ]
+    spray_candidates = [f"Spray_test_value_{i}" for i in range(1, 7)]
 
-    # If your dataset has explicit naming like "Z1_*", "Z2_*" etc, you can add:
-    # visual_cols = [c for c in cols if re.match(r"^Z\d+_", c)]
+    visual_cols = [c for c in visual_candidates if c in cols]
+    rain_cols = [c for c in rain_candidates if c in cols]
+    spray_cols = [c for c in spray_candidates if c in cols]
 
     test_cols = [c for c in [rain_target, spray_target] if c in df.columns]
 
     return FeatureGroups(
-        visual_cols=sorted(set(visual_cols)),
-        rain_cols=sorted(set(rain_cols)),
-        spray_cols=sorted(set(spray_cols)),
+        visual_cols=visual_cols,
+        rain_cols=rain_cols,
+        spray_cols=spray_cols,
         test_cols=test_cols,
     )
 
