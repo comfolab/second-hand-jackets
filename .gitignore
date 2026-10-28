@@ -3,4 +3,3 @@ pycache/
 .venv/
 outputs/
 .ipynb_checkpoints
-*.xlsx
