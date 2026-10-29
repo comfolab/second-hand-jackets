@@ -21,6 +21,8 @@ def clean_column_name(col: str) -> str:
 def standardize_column_names(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [clean_column_name(c) for c in df.columns]
+    if df.columns.duplicated().any():
+        raise ValueError("Column-name normalisation produced duplicate columns.")
     return df
 
 
@@ -50,6 +52,19 @@ class FeatureGroups:
     test_cols: list[str]
 
 
+VISUAL_COLUMNS = (
+    "Face_Neck", "Face_Shoulders", "Face_Front", "Face_Back", "Face_Arms", "Face_Cuffs",
+    "Membrane_Neck", "Membrane_Shoulders", "Membrane_Front", "Membrane_Back",
+    "Membrane_Arms", "Membrane_Cuffs",
+    "Seams_Neck", "Seams_Shoulders", "Seams_Front", "Seams_Back", "Seams_Arms", "Seams_Cuffs",
+    "Zips_Central", "Zips_Pockets", "Zips_Armpits", "Velcro_Average", "Trims_Average",
+)
+RAIN_COLUMNS = (
+    "Rain_Neck", "Rain_Shoulders", "Rain_Front", "Rain_Back", "Rain_Arms",
+    "Rain_Zip", "Rain_Cuffs", "Rain_Hem", "Rain_Underarms", "Rain_Pockets",
+)
+
+
 def infer_feature_groups(df: pd.DataFrame) -> FeatureGroups:
     """
     Identify the predefined elementary variables used in the analyses.
@@ -60,25 +75,10 @@ def infer_feature_groups(df: pd.DataFrame) -> FeatureGroups:
     rain_target = "Rain_test_Average"
     spray_target = "Spray_test_Average"
 
-    visual_candidates = [
-        "Face_Neck", "Face_Shoulders", "Face_Front", "Face_Back",
-        "Face_Arms", "Face_Cuffs",
-        "Membrane_Neck", "Membrane_Shoulders", "Membrane_Front",
-        "Membrane_Back", "Membrane_Arms", "Membrane_Cuffs",
-        "Seams_Neck", "Seams_Shoulders", "Seams_Front", "Seams_Back",
-        "Seams_Arms", "Seams_Cuffs",
-        "Zips_Central", "Zips_Pockets", "Zips_Armpits",
-        "Velcro_Average", "Trims_Average",
-    ]
-    rain_candidates = [
-        "Rain_Neck", "Rain_Shoulders", "Rain_Front", "Rain_Back",
-        "Rain_Arms", "Rain_Zip", "Rain_Cuffs", "Rain_Hem",
-        "Rain_Underarms", "Rain_Pockets",
-    ]
     spray_candidates = [f"Spray_test_value_{i}" for i in range(1, 7)]
 
-    visual_cols = [c for c in visual_candidates if c in cols]
-    rain_cols = [c for c in rain_candidates if c in cols]
+    visual_cols = [c for c in VISUAL_COLUMNS if c in cols]
+    rain_cols = [c for c in RAIN_COLUMNS if c in cols]
     spray_cols = [c for c in spray_candidates if c in cols]
 
     test_cols = [c for c in [rain_target, spray_target] if c in df.columns]

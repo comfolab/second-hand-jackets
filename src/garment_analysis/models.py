@@ -29,8 +29,12 @@ def run_pca(
     """
     PCA on numeric dataframe X (rows=samples, cols=features).
     """
-    cols = list(X.columns)
     Xn = X.apply(pd.to_numeric, errors="coerce")
+    # Empty or constant variables cannot contribute to a correlation PCA.
+    Xn = Xn.loc[:, Xn.nunique(dropna=True) > 1]
+    cols = list(Xn.columns)
+    if min(Xn.shape) < n_components:
+        raise ValueError("PCA has fewer usable rows/variables than requested components.")
 
     steps = [("imputer", SimpleImputer(strategy="median"))]
     if scale:
@@ -40,6 +44,11 @@ def run_pca(
 
     pca = PCA(n_components=n_components, random_state=random_state)
     scores_arr = pca.fit_transform(Xproc)
+    # Choose a reproducible sign: PC1 increases with the common condition axis.
+    for k in range(n_components):
+        if pca.components_[k].sum() < 0:
+            pca.components_[k] *= -1
+            scores_arr[:, k] *= -1
 
     scores = pd.DataFrame(scores_arr, index=X.index, columns=[f"PC{i+1}" for i in range(n_components)])
 
@@ -67,6 +76,7 @@ class PLSCVResult:
     x_scores: pd.Series  # first latent variable score (t1)
     y_pred: pd.Series
     y_pred_cv: pd.Series
+    cv_statistics: pd.DataFrame
 
 
 def fit_pls_cv(
@@ -92,6 +102,8 @@ def fit_pls_cv(
         raise ValueError("At least three observations are required for PLS.")
     if Xn.shape[1] == 0:
         raise ValueError("The PLS predictor matrix has no columns.")
+    if yn.nunique() < 2:
+        raise ValueError("PLS requires a non-constant outcome.")
 
     n_splits = int(min(max(2, n_splits), len(Xn)))
     kf = KFold(n_splits=n_splits, shuffle=True, random_state=random_state)
@@ -106,7 +118,6 @@ def fit_pls_cv(
     cv_predictions: dict[int, np.ndarray] = {}
 
     for n_comp in range(1, max_components + 1):
-        mses = []
         predictions = np.full(len(Xn), np.nan, dtype=float)
         for train_idx, test_idx in splits:
             Xtr_raw = Xn.iloc[train_idx]
@@ -114,7 +125,7 @@ def fit_pls_cv(
             ytr, yte = yn.iloc[train_idx].to_numpy(), yn.iloc[test_idx].to_numpy()
 
             fold_pipeline = Pipeline([
-                ("imputer", SimpleImputer(strategy="median")),
+                ("imputer", SimpleImputer(strategy="median", keep_empty_features=True)),
                 ("scaler", StandardScaler()),
             ])
             Xtr = fold_pipeline.fit_transform(Xtr_raw)
@@ -124,15 +135,15 @@ def fit_pls_cv(
             model.fit(Xtr, ytr)
             pred = model.predict(Xte).ravel()
             predictions[test_idx] = pred
-            mses.append(mean_squared_error(yte, pred))
 
-        cv_mse[n_comp] = float(np.mean(mses))
+        # Pool held-out errors by observation, not by unequal fold sizes.
+        cv_mse[n_comp] = float(mean_squared_error(yn, predictions))
         cv_predictions[n_comp] = predictions
 
     best_n = min(cv_mse, key=cv_mse.get)
 
     pipeline_X = Pipeline([
-        ("imputer", SimpleImputer(strategy="median")),
+        ("imputer", SimpleImputer(strategy="median", keep_empty_features=True)),
         ("scaler", StandardScaler()),
     ])
     Xproc = pipeline_X.fit_transform(Xn)
@@ -149,6 +160,22 @@ def fit_pls_cv(
     # x_scores_: (n_samples, n_components). Use first latent score as index
     t1 = pd.Series(model.x_scores_[:, 0], index=Xn.index, name="PLS_t1")
 
+    variance = float(np.mean((yn.to_numpy() - yn.mean()) ** 2))
+    baseline = np.full(len(yn), np.nan)
+    for train_idx, test_idx in splits:
+        baseline[test_idx] = yn.iloc[train_idx].mean()
+    baseline_mse = float(mean_squared_error(yn, baseline))
+    cv_statistics = pd.DataFrame([
+        {"n_components": k, "n": len(yn), "n_splits": n_splits,
+         "MSECV": mse, "RMSECV": np.sqrt(mse),
+         "RMSECV_std_y": np.sqrt(mse / variance),
+         "Q2_CV": 1 - mse / variance,
+         "training_mean_baseline_MSECV": baseline_mse,
+         "skill_vs_training_mean": 1 - mse / baseline_mse,
+         "selected": k == best_n}
+        for k, mse in cv_mse.items()
+    ])
+
     return PLSCVResult(
         model=model,
         pipeline_X=pipeline_X,
@@ -157,4 +184,5 @@ def fit_pls_cv(
         x_scores=t1,
         y_pred=y_pred,
         y_pred_cv=y_pred_cv,
+        cv_statistics=cv_statistics,
     )
